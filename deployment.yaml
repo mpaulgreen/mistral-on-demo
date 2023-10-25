@@ -1,0 +1,120 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  namespace: mistral
+  name: hf-tgi
+  labels:
+    app: hf-tgi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hf-tgi
+  template:
+    metadata:
+      labels:
+        app: hf-tgi
+        placement: a10g
+    spec:
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.product
+                    operator: In
+                    values:
+                      - NVIDIA-A10G
+      terminationGracePeriodSeconds: 120
+      securityContext: {}
+      containers:
+        - resources:
+            limits:
+              cpu: '3'
+              memory: 24Gi
+              nvidia.com/gpu: '1'
+            requests:
+              cpu: '3'
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 5
+            periodSeconds: 30
+            successThreshold: 1
+            failureThreshold: 3
+          terminationMessagePath: /dev/termination-log
+          name: server
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 8
+            periodSeconds: 100
+            successThreshold: 1
+            failureThreshold: 3
+          env:
+            - name: MODEL_ID
+              value: mistralai/Mistral-7B-Instruct-v0.1
+            - name: MAX_INPUT_LENGTH
+              value: '1024'
+            - name: MAX_TOTAL_TOKENS
+              value: '2048'
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /models-cache
+            - name: PORT
+              value: '3000'
+            - name: HOST
+              value: 0.0.0.0
+          securityContext:
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          imagePullPolicy: IfNotPresent
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 1
+            periodSeconds: 30
+            successThreshold: 1
+            failureThreshold: 24
+          volumeMounts:
+            - name: models-cache
+              mountPath: /models-cache
+            - name: shm
+              mountPath: /dev/shm
+          terminationMessagePolicy: File
+          image: 'ghcr.io/huggingface/text-generation-inference:1.1.0'
+      volumes:
+        - name: models-cache
+          persistentVolumeClaim:
+            claimName: models-cache
+        - name: shm
+          emptyDir: {}
+      dnsPolicy: ClusterFirst
+      tolerations:
+        - key: odh-notebook
+          value: 'true'
+          effect: NoSchedule
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 1
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+
